@@ -425,9 +425,10 @@ class Attn_Softmax(Function):
 
     @staticmethod
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_1 
-      raise NotImplementedError("Need to implement for Assignment 3")
-      #   END ASSIGN3_1
+        #   BEGIN ASSIGN3_1 
+        inp, mask = ctx.saved_values
+        return out_grad.f.attn_softmax_bw(out_grad, inp), mask
+        #   END ASSIGN3_1
 
 
 class LayerNorm(Function):

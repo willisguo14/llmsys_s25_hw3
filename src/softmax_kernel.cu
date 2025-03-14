@@ -297,7 +297,7 @@ Softmax backward in self attention.
 @thread
 gridDim.x = batch_size * nhead * seq_len / warps_per_block
 blockDim.x = WARP_SIZE
-blockDim.y = warps_per_block
+blockDim.y = warps_per_block = 4
 
 @param
 grad: [batch_size, nhead, seq_len, seq_len], output grad.
@@ -305,17 +305,20 @@ output: [batch_size, nhead, seq_len, seq_len], output of softmax forward.
 */
 template <typename T, int ITERATIONS>
 __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
-  int batch_idx = blockIdx.x * blockDim.y + threadIdx.y;
-  int offset = batch_idx * softmax_length + threadIdx.x;
+  int batch_idx = blockIdx.x * blockDim.y + threadIdx.y; // row
+  int offset = batch_idx * softmax_length + threadIdx.x; // 32 threads work on same row
 
   grad += offset;
   inp += offset;
 
+  // ITERATIONS = ceil(softmax_len / 32)
   T grad_reg[ITERATIONS];
   T inp_reg[ITERATIONS];
   float sum = 0.0;
 
-  #pragma unroll
+  // dot product sum_j (partial L)/(partial sigma_j) * sigma_j
+  // strided access => coalesce memory access
+  #pragma unroll // unroll/expand loop => more efficient (e.g. eliminate loop overhead)
   for (int i = 0; i < ITERATIONS; ++i) {
     int curr_idx = threadIdx.x + i * WARP_SIZE;
     if (curr_idx < softmax_length) {
@@ -325,11 +328,13 @@ __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
     }
   }
 
-  cg::thread_block b = cg::this_thread_block();
-  cg::thread_block_tile<WARP_SIZE> g = cg::tiled_partition<WARP_SIZE>(b);
+  cg::thread_block b = cg::this_thread_block(); // handle to current thread block
+  cg::thread_block_tile<WARP_SIZE> g = cg::tiled_partition<WARP_SIZE>(b); // divide thread block into group of threads
 
+  // warp level sum (butterfly reduction)
   for (int i = 1; i < WARP_SIZE; i <<= 1) sum += g.shfl_xor(sum, i);
 
+  // gradient formula
   #pragma unroll
   for (int i = 0; i < ITERATIONS; ++i) {
     int curr_idx = threadIdx.x + i * WARP_SIZE;
@@ -348,19 +353,60 @@ void launch_attn_softmax_bw(float *out_grad,
   const int warps_per_block = 4;
   dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
   dim3 block_dim(WARP_SIZE, warps_per_block);
-  // BEGIN ASSIGN3_1
-  
-  
-  // Launch kernel
-  // Hint: use ker_attn_softmax_bw<float, ITERATIONS> depending on softmax_len
-  
-  // Copy back to the host
-  
-  
 
-  // Free memory on device
-  // END ASSIGN3_1
+  int float_size = sizeof(float);
+  int out_grad_size = rows * softmax_len * float_size;
+  int soft_inp_size = rows * softmax_len * float_size;
 
+  float *d_out_grad, *d_soft_inp;
+  cudaMalloc((void **)&d_out_grad, out_grad_size);
+  cudaMalloc((void **)&d_soft_inp, soft_inp_size);
+
+  cudaMemcpy(d_out_grad, out_grad, out_grad_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_soft_inp, soft_inp, soft_inp_size, cudaMemcpyHostToDevice);
+  
+  if (softmax_len <= 32) {
+      ker_attn_softmax_bw<float, 1><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 64) {
+      ker_attn_softmax_bw<float, 2><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 128) {
+      ker_attn_softmax_bw<float, 4><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 256) {
+      ker_attn_softmax_bw<float, 8><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 384) {
+      ker_attn_softmax_bw<float, 12><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 512) {
+      ker_attn_softmax_bw<float, 16><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 768) {
+      ker_attn_softmax_bw<float, 24><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 1024) {
+      ker_attn_softmax_bw<float, 32><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else if (softmax_len <= 2048) {
+      ker_attn_softmax_bw<float, 64><<<grid_dim, block_dim, 0, stream>>>(
+          d_out_grad, d_soft_inp, softmax_len);
+  } else {
+      throw std::runtime_error("Unsupported max sequence length");
+  }
+
+  cudaMemcpy(out_grad, d_out_grad, out_grad_size, cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "launch_attn_softmax_bw Error: %s\n", cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+  }
+
+  cudaFree(d_out_grad);
+  cudaFree(d_soft_inp);
 }}
 
 }  

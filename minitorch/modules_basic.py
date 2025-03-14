@@ -32,9 +32,9 @@ class Embedding(Module):
         self.backend = backend
         self.num_embeddings = num_embeddings # Vocab size
         self.embedding_dim  = embedding_dim  # Embedding Dimension
-        
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        self.weights = Parameter(tensor_from_numpy(np.random.randn(num_embeddings, embedding_dim), backend))
+        ### END YOUR SOLUTION
     
     def forward(self, x: Tensor):
         """Maps word indices to one-hot vectors, and projects to embedding vectors.
@@ -46,9 +46,13 @@ class Embedding(Module):
             output : Tensor of shape (batch_size, seq_len, embedding_dim)
         """
         bs, seq_len = x.shape
-        
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        x_one_hot = one_hot(x, num_classes=self.num_embeddings) # (batch, seq_len, num_embeddings)
+
+        out = x_one_hot.view(bs * seq_len, self.num_embeddings) @ self.weights.value
+
+        return out.view(bs, seq_len, self.embedding_dim)
+        ### END YOUR SOLUTION
 
     
 class Dropout(Module):
@@ -70,8 +74,13 @@ class Dropout(Module):
         Returns: 
             output : Tensor of shape (*)
         """
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        if not self.training or self.p_dropout == 0:
+            return x
+        
+        mask = tensor_from_numpy(np.random.binomial(1, 1-self.p_dropout, size=x.shape))
+        return (x * mask) / (1 - self.p_dropout)
+        ### END YOUR SOLUTION
 
 
 class Linear(Module):
@@ -85,13 +94,19 @@ class Linear(Module):
             bias     - If True, then add an additive bias
 
         Attributes:
-            weight - The learnable weights of shape (in_size, out_size) initialized from Uniform(-1/sqrt(1/in_size), 1/sqrt(1/in_size)).
-            bias   - The learnable weights of shape (out_size, ) initialized from Uniform(-1/sqrt(1/in_size), 1/sqrt(1/in_size)).
+            weights - The learnable weights of shape (in_size, out_size) initialized from Uniform(-1/sqrt(in_size), 1/sqrt(in_size)).
+            bias   - The learnable weights of shape (out_size, ) initialized from Uniform(-1/sqrt(in_size), 1/sqrt(in_size)).
         """
         self.out_size = out_size
-        
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        a = 1 / np.sqrt(in_size)
+        self.weights = Parameter(rand((in_size, out_size), backend=backend) * 2 * a - a)
+
+        if bias:
+            self.bias = Parameter(rand((out_size,), backend=backend) * 2 * a - a)
+        else:
+            self.bias = None
+        ### END YOUR SOLUTION
 
     def forward(self, x: Tensor):
         """Applies a linear transformation to the incoming data.
@@ -103,9 +118,14 @@ class Linear(Module):
             output : Tensor of shape (n, out_size)
         """
         batch, in_size = x.shape
+        ### BEGIN YOUR SOLUTION
+        out = x @ self.weights.value 
         
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        if self.bias:
+            out += self.bias.value
+        
+        return out
+        ### END YOUR SOLUTION
 
 
 class LayerNorm1d(Module):
@@ -123,9 +143,10 @@ class LayerNorm1d(Module):
         """
         self.dim = dim
         self.eps = eps
-        
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        self.weights = Parameter(ones((dim,), backend=backend))
+        self.bias = Parameter(zeros((dim,), backend=backend))
+        ### END YOUR SOLUTION
 
     def forward(self, x: Tensor) -> Tensor:
         """Applies Layer Normalization over a mini-batch of inputs. 
@@ -139,6 +160,9 @@ class LayerNorm1d(Module):
             output - Tensor of shape (bs, dim)
         """
         batch, dim = x.shape
-        
-        # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        mean = x.mean(dim=1)
+        var = x.var(dim=1)
+
+        return self.weights.value * ((x - mean) / (var + self.eps) ** 0.5) + self.bias.value
+        ### END YOUR SOLUTION

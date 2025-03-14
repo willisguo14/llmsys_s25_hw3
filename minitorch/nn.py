@@ -9,7 +9,6 @@ from .tensor_functions import Function, rand, tensor, tensor_from_numpy
 import numpy as np
 import math
 
-
 def tile(input: Tensor, kernel: Tuple[int, int]) -> Tuple[Tensor, int, int]:
     """
     Reshape an image tensor for 2D pooling
@@ -209,8 +208,7 @@ def GELU(input: Tensor) -> Tensor:
     """Applies the GELU activation function with 'tanh' approximation element-wise
     https://pytorch.org/docs/stable/generated/torch.nn.GELU.html
     """
-    # COPY FROM ASSIGN2_2
-    raise NotImplementedError
+    return 0.5 * input * (1 + (np.sqrt(2 / math.pi) * (input + 0.044715 * (input ** 3))).tanh())
 
 
 def logsumexp(input: Tensor, dim: int) -> Tensor:
@@ -225,9 +223,10 @@ def logsumexp(input: Tensor, dim: int) -> Tensor:
         out : The output tensor with the same number of dimensions as input (equiv. to keepdims=True)
             NOTE: minitorch functions/tensor functions typically keep dimensions if you provide a dimensions.
     """  
-    # COPY FROM ASSIGN2_2
-    raise NotImplementedError
-
+    ### BEGIN YOUR SOLUTION
+    input_max = max(input, dim)
+    return input_max + (input - input_max).exp().sum(dim).log()
+    ### END YOUR SOLUTION
 
 def one_hot(input: Tensor, num_classes: int) -> Tensor:
     """Takes a Tensor containing indices of shape (*) and returns a tensor of shape (*, num_classes) 
@@ -236,8 +235,12 @@ def one_hot(input: Tensor, num_classes: int) -> Tensor:
 
     Hint: You may want to use a combination of np.eye, tensor_from_numpy, 
     """
-    # COPY FROM ASSIGN2_2
-    raise NotImplementedError
+    return tensor_from_numpy(
+                np.eye(num_classes)[input.to_numpy().astype(int)], 
+                backend=input.backend
+            )
+
+
 
 
 def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
@@ -252,8 +255,9 @@ def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
         loss : (minibatch, )
     """
     result = None
-    
-    # COPY FROM ASSIGN2_2
-    raise NotImplementedError
-    
+    ### BEGIN YOUR SOLUTION
+    batch_size, num_classes = logits.shape
+    target_one_hot = one_hot(target, num_classes) # (batch, num_classes)
+    result = logsumexp(logits, dim=1) - (logits * target_one_hot).sum(1)
+    ### END YOUR SOLUTION
     return result.view(batch_size, )

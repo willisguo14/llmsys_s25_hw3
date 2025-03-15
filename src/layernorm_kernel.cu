@@ -227,7 +227,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
 
       for (int r = threadIdx.y; r < rows; r += TILE_DIM) {
         dout = static_cast<float>(out_grad[offset]);
-        val = static_cast<float>(inp_or_out[offset]);
+        val = static_cast<float>(inp[offset]); // FIXME: should be inp_or_out
         
         dgamma += dout * ((val - local_beta) / local_gamma); // calculate xhat from out
         dbetta += dout;
@@ -239,7 +239,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
     else {
       for (int r = threadIdx.y; r < rows; r += TILE_DIM) {
         dout = static_cast<float>(out_grad[offset]);
-        val = static_cast<float>(inp_or_out[offset]);
+        val = static_cast<float>(inp[offset]); // FIXME: should be inp_or_out
         
         dgamma += dout * ((val - static_cast<float>(means[r])) * rsqrtf(static_cast<float>(vars[r]) + LN_EPSILON)); // calculate xhat from inp
         dbetta += dout;

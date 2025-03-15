@@ -433,7 +433,38 @@ class CudaKernelOps(TensorOps):
     @staticmethod
     def layernorm_fw(inp: Tensor, gamma: Tensor, beta: Tensor):
       #   BEGIN ASSIGN3_2
-      raise("Not implemented")
+      ln_res = inp.zeros(inp.shape)
+      vars, means = inp.zeros((inp.shape[0],)), inp.zeros((inp.shape[0],))
+    
+      batch_size, hidden_dim = inp.shape[0], inp.shape[1]
+      stream = torch.cuda.current_stream().cuda_stream
+
+      lib_layernorm.launch_layernorm.argtypes = [
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          ctypes.c_int,
+          ctypes.c_int,
+          ctypes.c_void_p
+      ]
+      lib_layernorm.launch_layernorm.restype = None
+
+      lib_layernorm.launch_layernorm(
+        ln_res._tensor._storage,
+        vars._tensor._storage,
+        means._tensor._storage,
+        inp._tensor._storage,
+        gamma._tensor._storage,
+        beta._tensor._storage,
+        batch_size,
+        hidden_dim,
+        stream
+      )
+
+      return ln_res
       #   END ASSIGN3_2
       
     @staticmethod

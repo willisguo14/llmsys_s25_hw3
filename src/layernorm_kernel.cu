@@ -26,12 +26,12 @@ gridDim.x = batch_size * seq_len
 blockDim.x = hidden_size
 
 @param
-ln_res: [batch_size * seq_len, hidden_size], ln result.
+ln_res: [batch_size * seq_len, hidden_dim], ln result.
 vars: [batch_size * seq_len], variance per token
 means: [batch_size * seq_len], means per token, can be nullput
-inp: [batch_size * seq_len, hidden_size], ln input.
-scale: [hidden_size], ln scale
-bias: [hidden_size], ln bias
+inp: [batch_size * seq_len, hidden_dim], ln input.
+scale: [hidden_dim], ln scale
+bias: [hidden_dim], ln bias
 */
 template <typename T>
 __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
@@ -43,20 +43,53 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   // 1. Compute x and x^2 with reinterpret_cast by casting to float4 for speedup
   // 2. Compute reduce sum with blockReduce and add epsilon with LN_EPSILON
   // 3. Compute layernorm result with reinterpret_cast by casting to float4 for speedup
+
+  // NOTE: hidden_size is hidden_dim / 4 
   
   // Step 1
   float l_sum = 0;
+  float l_sq_sum = 0;
   const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
     float4 val = inp_f4[idx];
     l_sum += val.x + val.y + val.z + val.w;
+    l_sq_sum += val.x * val.x + val.y * val.y + val.z * val.z + val.w * val.w;
   }
 
   // Step 2
+  float reduce_vals[2] = {l_sum, l_sq_sum};
+  blockReduce<ReduceType::kSum, 2>(reduce_vals);
+
+  __shared__ float s_mean, s_var;
+  int h_dim = hidden_size * 4;
+  if (threadIdx.x == 0) {
+    s_mean = reduce_vals[0] / h_dim;
+    if (means != nullptr) {
+      means[blockIdx.x] = s_mean;
+    }
+
+    s_var = (reduce_vals[1] / h_dim) - s_mean * s_mean + LN_EPSILON;
+    vars[blockIdx.x] = s_var;
+
+    s_var = rsqrtf(s_var); // s_var is now 1/stdev
+  }
+  __syncthreads(); // important! 
 
   // Step 3
-  
-  assert(false && "Not Implemented");
+  float4 *out_f4 = reinterpret_cast<float4 *>(ln_res) + blockIdx.x * hidden_size;
+  for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    float4 scale_f4 = *(reinterpret_cast<const float4 *>(scale) + idx);
+    float4 bias_f4 = *(reinterpret_cast<const float4 *>(bias) + idx);
+
+    float4 inp_val = inp_f4[idx];
+
+    inp_val.x = (inp_val.x - s_mean) * s_var * scale_f4.x + bias_f4.x;
+    inp_val.y = (inp_val.y - s_mean) * s_var * scale_f4.y + bias_f4.y;
+    inp_val.z = (inp_val.z - s_mean) * s_var * scale_f4.z + bias_f4.z;
+    inp_val.w = (inp_val.w - s_mean) * s_var * scale_f4.w + bias_f4.w;
+
+    out_f4[idx] = inp_val;
+  }
   /// END ASSIGN3_2
 }
 

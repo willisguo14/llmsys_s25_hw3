@@ -227,9 +227,9 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
 
       for (int r = threadIdx.y; r < rows; r += TILE_DIM) {
         dout = static_cast<float>(out_grad[offset]);
-        val = static_cast<float>inp_or_out[offset];
+        val = static_cast<float>(inp_or_out[offset]);
         
-        dgamma += dout * ((val - local_beta) / local_gamma) // calculate xhat from out
+        dgamma += dout * ((val - local_beta) / local_gamma); // calculate xhat from out
         dbetta += dout;
 
         offset += offset_stride;
@@ -239,7 +239,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
     else {
       for (int r = threadIdx.y; r < rows; r += TILE_DIM) {
         dout = static_cast<float>(out_grad[offset]);
-        val = static_cast<float>inp_or_out[offset];
+        val = static_cast<float>(inp_or_out[offset]);
         
         dgamma += dout * ((val - static_cast<float>(means[r])) * rsqrtf(static_cast<float>(vars[r]) + LN_EPSILON)); // calculate xhat from inp
         dbetta += dout;
@@ -341,7 +341,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
 
     // xhat = (out - beta) / gamma
     // xhat = (inp - mean) * rsqrtf(var)
-    xhat = reinterpret_cast<const float4 *>(inp_or_out)[offset_f4]; 
+    xhat = reinterpret_cast<const float4 *>(inp)[offset_f4]; // FIXME: should be inp_or_out
     rsqrt_var = rsqrtf(static_cast<float>(vars[blockIdx.x]) + LN_EPSILON);
 
     if (means == nullptr) {
@@ -372,27 +372,19 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   __shared__ float s_sum_dxhat, s_sum_dxhat_xhat;
   if (threadIdx.x == 0) {
     float dim = hidden_dim * 4;
-    s_sum_dxhat = reduce_val[0] / dim;
-    s_sum_dxhat_xhat = reduce_val[1] / dim;
+    s_sum_dxhat = reduce_vals[0] / dim;
+    s_sum_dxhat_xhat = reduce_vals[1] / dim;
   }
   __syncthreads();
 
   if (threadIdx.x < hidden_dim) {
     // dxhat is now calculating inp_grad
-    dxhat.x = (dxhat.x - s_sum_dxhat - xhat.x * s_sum_dxhat_xhat) * var_rsqrt;
-    dxhat.y = (dxhat.y - s_sum_dxhat - xhat.y * s_sum_dxhat_xhat) * var_rsqrt;
-    dxhat.z = (dxhat.z - s_sum_dxhat - xhat.z * s_sum_dxhat_xhat) * var_rsqrt;
-    dxhat.w = (dxhat.w - s_sum_dxhat - xhat.w * s_sum_dxhat_xhat) * var_rsqrt;
+    dxhat.x = (dxhat.x - s_sum_dxhat - xhat.x * s_sum_dxhat_xhat) * rsqrt_var;
+    dxhat.y = (dxhat.y - s_sum_dxhat - xhat.y * s_sum_dxhat_xhat) * rsqrt_var;
+    dxhat.z = (dxhat.z - s_sum_dxhat - xhat.z * s_sum_dxhat_xhat) * rsqrt_var;
+    dxhat.w = (dxhat.w - s_sum_dxhat - xhat.w * s_sum_dxhat_xhat) * rsqrt_var;
 
-    if (residual_grad) {
-      float4 dresidual_f4 = reinterpret_cast<const float4 *>(residual_grad)[offset_f4];
-      dxhat.x += dresidual_f4.x;
-      dxhat.y += dresidual_f4.y;
-      dxhat.z += dresidual_f4.z;
-      dxhat.w += dresidual_f4.w;
-    }
-
-    reinterpret_cast<const float4 *>(inp_grad)[offset] = dxhat;
+    reinterpret_cast<const float4 *>(inp_grad)[offset_f4] = dxhat;
   }
   /// END ASSIGN3_2
 }

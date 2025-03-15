@@ -384,7 +384,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
     dxhat.z = (dxhat.z - s_sum_dxhat - xhat.z * s_sum_dxhat_xhat) * rsqrt_var;
     dxhat.w = (dxhat.w - s_sum_dxhat - xhat.w * s_sum_dxhat_xhat) * rsqrt_var;
 
-    reinterpret_cast<const float4 *>(inp_grad)[offset_f4] = dxhat;
+    reinterpret_cast<float4 *>(inp_grad)[offset_f4] = dxhat;
   }
   /// END ASSIGN3_2
 }

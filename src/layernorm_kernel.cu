@@ -12,6 +12,11 @@ namespace cuda {
 const float LN_EPSILON = 1e-8f;
 #define TILE_DIM 32
 
+template <typename T>
+__forceinline__ __device__ T add_eps(T x) {
+  return fabsf(x) > LN_EPSILON ? x : (x < 0 ? -LN_EPSILON : LN_EPSILON);
+}
+
 
 /**
 @brief: ker_layer_norm
@@ -229,7 +234,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
         dout = static_cast<float>(out_grad[offset]);
         val = static_cast<float>(inp[offset]); // FIXME: should be inp_or_out
         
-        dgamma += dout * ((val - local_beta) / local_gamma); // calculate xhat from out
+        dgamma += dout * ((val - local_beta) / add_eps(local_gamma)); // calculate xhat from out
         dbetta += dout;
 
         offset += offset_stride;
@@ -347,10 +352,10 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
     if (means == nullptr) {
       float4 betta_f4 = reinterpret_cast<const float4 *>(betta)[threadIdx.x];
       
-      xhat.x = (xhat.x - betta_f4.x) / gamma_f4.x;
-      xhat.y = (xhat.y - betta_f4.y) / gamma_f4.y;
-      xhat.z = (xhat.z - betta_f4.z) / gamma_f4.z;
-      xhat.w = (xhat.w - betta_f4.w) / gamma_f4.w;
+      xhat.x = (xhat.x - betta_f4.x) / add_eps(gamma_f4.x);
+      xhat.y = (xhat.y - betta_f4.y) / add_eps(gamma_f4.y);
+      xhat.z = (xhat.z - betta_f4.z) / add_eps(gamma_f4.z);
+      xhat.w = (xhat.w - betta_f4.w) / add_eps(gamma_f4.w);
     } else {
       float mean = static_cast<float>(means[blockIdx.x]);
 

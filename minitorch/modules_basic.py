@@ -166,3 +166,13 @@ class LayerNorm1d(Module):
 
         return self.weights.value * ((x - mean) / (var + self.eps) ** 0.5) + self.bias.value
         ### END YOUR SOLUTION
+
+class LayerNorm(Module):
+    def __init__(self, dim: int, backend: TensorBackend):
+        super().__init__()
+
+        self.weights = Parameter(ones((dim,), backend=backend))
+        self.bias = Parameter(zeros((dim,), backend=backend))
+    
+    def forward(self, x: Tensor) -> Tensor:
+        return x.layernorm(self.weights.value, self.bias.value)

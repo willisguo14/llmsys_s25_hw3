@@ -5,6 +5,7 @@ from .modules_basic import (
     Embedding,
     Dropout,
     LayerNorm1d,
+    LayerNorm,
     Linear
 )
 from .tensor_ops import TensorBackend
@@ -101,24 +102,29 @@ class MultiHeadAttention(Module):
         assert q_dim == k_dim == v_dim
         result = None
         
+        scores = (q @ kT) / (self.attn_hidden_dim ** 0.5) # (batch_size, num_head, seq_len, seq_len)
+
         if not self.use_fused_kernel:
             ### BEGIN YOUR SOLUTION
-            scores = (q @ kT) / (self.attn_hidden_dim ** 0.5) # (batch_size, num_head, seq_len, seq_len)
-
             if self.causal:
-                mask = self.create_causal_mask(queries_len)
+                mask = self.create_causal_mask(batch_size, num_head, queries_len)
                 scores += mask
             
             attn = softmax(scores, dim=3)
-
-            result = attn @ v # (batch_size, num_head, seq_len, attn_hidden_dim)
-            result = result.permute(0, 2, 1, 3)
-            result = result.contiguous().view(batch_size, queries_len, self.n_head * self.attn_hidden_dim) # (batch_size, seq_len, n_embd)
             ### END YOUR SOLUTION
         else:
             # BEGIN ASSIGN3_3
-            raise NotImplementedError
+            if self.causal:
+                mask = self.create_causal_mask(batch_size, num_head, queries_len)
+            else:
+                mask = None
+                
+            attn = scores.attn_softmax(mask)
             # END ASSIGN3_3
+
+        result = attn @ v # (batch_size, num_head, seq_len, attn_hidden_dim)
+        result = result.permute(0, 2, 1, 3)
+        result = result.contiguous().view(batch_size, queries_len, self.n_head * self.attn_hidden_dim) # (batch_size, seq_len, n_embd)
 
         return result
 
@@ -210,7 +216,8 @@ class TransformerLayer(Module):
             self.ln_2 = LayerNorm1d(dim=n_embd, eps=ln_eps, backend=backend)
         else:
             # BEGIN ASSIGN3_3
-            raise NotImplementedError
+            self.ln_1 = LayerNorm(dim=n_embd)
+            self.ln_2 = LayerNorm(dim=n_embd)
             # END ASSIGN3_3
 
     
@@ -223,21 +230,15 @@ class TransformerLayer(Module):
         """
         batch_size, seq_len, x_dim = x.shape
         
-        if not self.use_fused_kernel:
-            # COPY FROM ASSIGN2_4
-            _x = x
-            x = self.ln_1(x.view(batch_size*seq_len, x_dim)).view(batch_size, seq_len, x_dim)
-            x = self.attention(x)
-            x += _x
+        _x = x
+        x = self.ln_1(x.view(batch_size*seq_len, x_dim)).view(batch_size, seq_len, x_dim)
+        x = self.attention(x)
+        x += _x
 
-            _x = x
-            x = self.ln_2(x.view(batch_size*seq_len, x_dim)).view(batch_size, seq_len, x_dim)
-            x = self.ff(x)
-            x += _x
-        else:
-            # BEGIN ASSIGN3_3
-            raise NotImplementedError
-            # END ASSIGN3_3
+        _x = x
+        x = self.ln_2(x.view(batch_size*seq_len, x_dim)).view(batch_size, seq_len, x_dim)
+        x = self.ff(x)
+        x += _x
 
         return x
 
@@ -296,7 +297,7 @@ class DecoderLM(Module):
             self.ln = LayerNorm1d(n_embd, ln_eps, backend)
         else:
             # BEGIN ASSIGN3_3
-            raise NotImplementedError
+            self.ln = LayerNorm(n_embd, backend)
             # END ASSIGN3_3
     
     def forward(self, idx):
@@ -311,40 +312,29 @@ class DecoderLM(Module):
         batch_size, seq_len = idx.shape
         pos = tensor([i for i in range(seq_len)], backend=self.backend).view(1, seq_len)
 
-        if not self.use_fused_kernel:
-            # COPY FROM ASSIGN2_4
-            ### BEGIN SOLUTION
-            token_embds = self.token_embeddings(idx)
-            # Get Token Embeddings of shape (batch_size, seq_len, n_embd)
-            """
-            Create Positional Embeddings of shape (1, seq_len, n_embd)
-            - First create a tensor of position ids [0, 1, 2, ..., seq_len - 1] of shape (1, seq_len)
-            - Pass the position ids through your positional embedding layer
-            - Ensure shape is (1, seq_len, n_embd)
-            """
-            # pos_ids = tensor_from_numpy(np.arange(seq_len).reshape((1, seq_len)), self.backend)
-            pos_embds = self.position_embeddings(pos)
+        # COPY FROM ASSIGN2_4
+        ### BEGIN SOLUTION
+        token_embds = self.token_embeddings(idx)
+        # Get Token Embeddings of shape (batch_size, seq_len, n_embd)
+        """
+        Create Positional Embeddings of shape (1, seq_len, n_embd)
+        - First create a tensor of position ids [0, 1, 2, ..., seq_len - 1] of shape (1, seq_len)
+        - Pass the position ids through your positional embedding layer
+        - Ensure shape is (1, seq_len, n_embd)
+        """
+        # pos_ids = tensor_from_numpy(np.arange(seq_len).reshape((1, seq_len)), self.backend)
+        pos_embds = self.position_embeddings(pos)
 
-            embds = token_embds + pos_embds
+        embds = token_embds + pos_embds
 
-            out = self.dropout(embds)
+        out = self.dropout(embds)
 
-            out = self.t_layer_1(out)
-            out = self.t_layer_2(out)
-            out = self.t_layer_3(out)
-            out = self.t_layer_4(out)
+        out = self.t_layer_1(out)
+        out = self.t_layer_2(out)
+        out = self.t_layer_3(out)
+        out = self.t_layer_4(out)
 
-            out = self.ln(out.view(batch_size*seq_len, self.n_embd))
-            out = self.lm_head(out).view(batch_size, seq_len, self.n_vocab)
+        out = self.ln(out.view(batch_size*seq_len, self.n_embd))
+        out = self.lm_head(out).view(batch_size, seq_len, self.n_vocab)
 
-            return out
-            # Pass through each transformer Layer
-            # Final LayerNorm
-            # Get correct shape
-            ### END SOLUTION
-        else:
-            # BEGIN ASSIGN3_3
-            raise NotImplementedError
-            # END ASSIGN3_3
-
-        return x
+        return out
